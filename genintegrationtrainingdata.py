@@ -17,6 +17,7 @@ from numba import jit
 import multiprocessing as mp
 import json
 import time
+import os
 
 
 
@@ -29,6 +30,9 @@ binaryprobs = [.2,.2,.2,.2,.2]
 varprobs = [.4,.3,.2,.1]
 
 problemvars = [sp.core.numbers.NaN,sp.core.numbers.ComplexInfinity,sp.core.numbers.Infinity]
+numCPUs = os.cpu_count()
+if numCPUs == None:
+    numCPUs = 4
 
 
 spfns = {
@@ -241,17 +245,23 @@ def fwdgenerate(numnodes,queue):
 		queue.put([['0'],['0']])
 		return[['0'],['0']]
 
-def loadtrainingdata(filepath):
-	pairs = []
-	with open(filepath) as file:
-		for line in file.readlines():
-			pairs.append(json.loads(line))
-	return pairs
-
 def savetrainingdata(pairs,filepath):
-	with open(filepath,'w') as file:
-		for i in pairs:
-			file.write(json.dumps(i))
+	originallength = len(pairs)
+	print(f'Saving {originallength} pairs to: {filepath}')
+	with open(filepath,'a') as file:
+		pass #Create the file if it doesn't exist
+	with open(filepath,'r') as file:
+		for line in file.readlines():
+			i=0
+			while i < len(pairs):
+				if pairs[i][0] == json.loads(line)[0]:
+					pairs.pop(i)
+				else:
+					i += 1
+		print(f'I found and deleted {originallength - len(pairs)} duplicates.')
+	with open(filepath,'a') as file:
+		while pairs:
+			file.write(json.dumps(pairs.pop()))
 			file.write("\n")
 
 def asHours(s):
@@ -270,76 +280,69 @@ def timeSince(since, percent):
 	return 'Elapsed: %s. Remaining: %s.' % (asHours(s), asHours(rs))
 
 if __name__ == '__main__':
-	fwdtimes = 7200
-	bwdtimes = 7200
+	fwdtimes = 10
+	bwdtimes = 10
+	fwdcompleted = 0
+	bwdcompleted = 0
 	numnodes = 3
-	inpath = 'trainingdata.txt'
+	savepath = 'trainingdata.txt'
 	outpath = None
 	timeout = 10
-	pairs = loadtrainingdata(inpath)
+	pairs = []
 	starttime = time.time()
 	with mp.Manager() as manager:
-		q=mp.Queue()
+		q = manager.Queue()
 		try:
-			for i in range(max(fwdtimes,bwdtimes)):
-				if i < fwdtimes:
-					try:
-						p=mp.Process(target=fwdgenerate, args = (numnodes,q))
-						p.start()
-						p.join(timeout)
-						if p.is_alive():
-							print("Timeout")
-							pair = [['0'],['0']]
-						else:
-							pair = q.get()
-						if pair in pairs:
-							pass
-						else:
-							pairs.append(pair)
-					finally:
-						p.terminate()
-						avgsecs = (time.time()-starttime)/(2*i+1)
-						if i < bwdtimes:
-							callscompleted = 2*i + 1
-						else:
-							callscompleted = bwdtimes + i + 1
-						print(rpntoinfix(pair[0]) + '   --->   ' + rpntoinfix(pair[1]))
-						print(f"Forward functions computed: {i+1}/{fwdtimes}")
-						print(f"Total functions computed: {callscompleted}/{fwdtimes+bwdtimes}")
-						print(f"Average seconds per function call: {avgsecs}")
-						print(timeSince(starttime, callscompleted/(fwdtimes + bwdtimes)))
-				if i < bwdtimes:
-					try:
-						p=mp.Process(target=bwdgenerate, args = (numnodes,q))
-						p.start()
-						p.join(timeout)
-						if p.is_alive():
-							print("Timeout")
-							pair = [['0'],['0']]
-						else:
-							pair = q.get()
-						if pair in pairs:
-							pass
-						else:
-							pairs.append(pair)
-					finally:
-						p.terminate()
-						avgsecs = (time.time()-starttime)/(2*i+1)
-						if i < fwdtimes:
-							callscompleted = 2*i + 2
-						else:
-							callscompleted = fwdtimes + i + 1
-						print(rpntoinfix(pair[0]) + '   --->   ' + rpntoinfix(pair[1]))
-						print(f"Backward functions computed: {i+1}/{bwdtimes}")
-						print(f"Total functions computed: {callscompleted}/{fwdtimes+bwdtimes}")
-						print(f"Average seconds per function call: {(time.time()-starttime)/(2*i+2)}")
-						print(timeSince(starttime, callscompleted/(fwdtimes + bwdtimes)))
-		finally:
-			if outpath == None:
-				savetrainingdata(pairs,inpath)
-			else:
-				savetrainingdata(pairs,outpath)
+			while (fwdcompleted < fwdtimes) | (bwdcompleted < bwdtimes):
+				if fwdcompleted < fwdtimes:
+					processes = min(numCPUs,fwdtimes-fwdcompleted)
+					p = [mp.Process(target = fwdgenerate, args = (numnodes,q)) for i in range(processes)]
+					for proc in p:
+						proc.start()
+					for i in range(timeout):
+						time.sleep(1)
+						if not any(proc.is_alive() for proc in p):
+							break
+					for i in range(len(p)):
+						if p[i].is_alive():
+							p[i].terminate()
+							print(f"Timeout on process {i}. Terminating.")
+					fwdcompleted += processes
+					print(f"Forward functions completed: {fwdcompleted}/{fwdtimes}")
 
+				while not q.empty():
+					pair = q.get(timeout = 3)
+					print(rpntoinfix(pair[0]) + '   --->   ' + rpntoinfix(pair[1]))
+					if pair not in pairs:
+						pairs.append(pair)
+				if bwdcompleted < bwdtimes:
+					processes = min(numCPUs,bwdtimes-bwdcompleted)
+					p = [mp.Process(target = bwdgenerate, args = (numnodes,q)) for i in range(processes)]
+					for proc in p:
+						proc.start()
+					for i in range(timeout):
+						time.sleep(1)
+						if not any(proc.is_alive() for proc in p):
+							break
+					for i in range(len(p)):
+						if p[i].is_alive():
+							p[i].terminate()
+							print(f"Timeout on process {i}. Terminating.")
+					bwdcompleted += processes
+					print(f"Backwards functions completed: {bwdcompleted}/{bwdtimes}")
+				while not q.empty():
+					pair = q.get(timeout = 3)
+					print(rpntoinfix(pair[0]) + '   --->   ' + rpntoinfix(pair[1]))
+					if pair not in pairs:
+						pairs.append(pair)
+				print(f"Total functions completed: {bwdcompleted+fwdcompleted}/{bwdtimes+fwdtimes}")
+				print(f"Average seconds per function call: {(time.time()-starttime)/(bwdcompleted+fwdcompleted)}")
+				print(timeSince(starttime, (bwdcompleted+fwdcompleted)/(fwdtimes + bwdtimes)))
+				if len(pairs)>1000:
+					savetrainingdata(pairs,savepath)
+					print('Save complete. Resuming...')
+		finally:
+			savetrainingdata(pairs,savepath)
 
 """
 fix this after we implement the training set

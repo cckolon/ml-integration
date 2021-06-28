@@ -6,7 +6,7 @@
 
 A project to use machine learning in Python to perform symbolic integration of functions.
 
-Inspired by the following paper: [Deep Learning for Symbolic Mathematics](https://arxiv.org/pdf/1912.01412.pdf) by Lample and Charton
+Inspired by Lample and Charton's paper, [Deep Learning for Symbolic Mathematics](https://arxiv.org/pdf/1912.01412.pdf).
 
 Other relevant links:
 
@@ -17,4 +17,6 @@ Other relevant links:
 * [RPN comprehension](https://blog.klipse.tech/python/2016/09/22/python-reverse-polish-evaluator.html)
 
 * [Just-In-Time compilation of functions with Numba](http://numba.pydata.org/)
+
+* [Multiprocessing in Python](https://docs.python.org/3/library/multiprocessing.html)
 
