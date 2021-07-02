@@ -30,6 +30,7 @@ binaryprobs = [.2,.2,.2,.2,.2]
 varprobs = [.4,.3,.2,.1]
 
 problemvars = [sp.core.numbers.NaN,sp.core.numbers.ComplexInfinity,sp.core.numbers.Infinity]
+problemstrs = ['nan','zoo','oo']
 numCPUs = os.cpu_count()
 if numCPUs == None:
     numCPUs = 4
@@ -167,7 +168,7 @@ def bwdgenerate(numnodes,queue):
 	while integral.is_constant():
 		tree = randomtree(numnodes)
 		integral = sp.sympify(rpntoinfix(tree.reversepolish()))
-	integral = sp.simplify(integral)
+	integral = sp.expand(integral)
 	if integral.func == sp.core.add.Add:
 		for i in integral.args:
 			if i.is_constant():
@@ -175,7 +176,7 @@ def bwdgenerate(numnodes,queue):
 			elif type(i) in problemvars: # return zeros if the integral contains a problematic variable
 				queue.put([['0'],['0']])
 				return[['0'],['0']]
-	integrand = sp.diff(integral,sp.symbols('x'))
+	integrand = sp.expand(sp.diff(integral,sp.symbols('x')))
 	print('integral of: ')
 	print(integrand)
 	print('is')
@@ -197,8 +198,7 @@ def bwdgenerate(numnodes,queue):
 
 def fwdgenerate(numnodes,queue):
 	tree = randomtree(numnodes)
-	integrand = sp.sympify(rpntoinfix(tree.reversepolish()))
-	integrand = sp.simplify(integrand)
+	integrand = sp.expand(sp.sympify(rpntoinfix(tree.reversepolish())))
 	print('Attempting to integrate:')
 	print(integrand)
 	try:
@@ -212,7 +212,7 @@ def fwdgenerate(numnodes,queue):
 		queue.put([['0'],['0']])
 		return [['0'],['0']]
 	try:
-		simplifiedintegral = sp.simplify(integral)
+		simplifiedintegral = sp.expand(integral)
 		integral = simplifiedintegral
 	except:
 		pass
@@ -245,6 +245,48 @@ def fwdgenerate(numnodes,queue):
 		queue.put([['0'],['0']])
 		return[['0'],['0']]
 
+def ibpselftest(integrandseq,integralseq):
+	return sp.diff(sp.sympify(rpntoinfix(integralseq))) == sp.sympify(rpntoinfix(integrandseq))
+	
+def ibpgenerate(numnodes,queue,pairs):
+	f = sp.core.numbers.Zero()
+	while f.is_constant():
+		ftree = randomtree(numnodes)
+		f = sp.sympify(rpntoinfix(ftree.reversepolish()))
+	g = sp.core.numbers.Zero()
+	while g.is_constant():
+		gtree = randomtree(numnodes)
+		g = sp.sympify(rpntoinfix(gtree.reversepolish()))
+	df = sp.expand(sp.diff(f,sp.symbols('x')))
+	dg = sp.expand(sp.diff(g,sp.symbols('x')))
+	fdgseq = sptorpn(sp.expand(f*dg))
+	gdfseq = sptorpn(sp.expand(g*df))
+	for pair in pairs:
+		if pair[0] == fdgseq:
+			integrandseq = gdfseq
+			integral = sp.expand(g*f-sp.sympify(rpntoinfix(pair[1])))
+			integralseq = sptorpn(integral)
+			if ibpselftest(integrandseq,integralseq):
+				print('Self test passed.')
+				queue.put([integrandseq,integralseq])
+				return [integrandseq,integralseq]
+			else:
+				print('Self test failed.')
+				print(rpntoinfix(integralseq) + ' does not differentiate to ' + rpntoinfix(integrandseq))
+				return [['0'],['0']]
+		elif pair[0] == gdfseq:
+			integrandseq = fdgseq
+			integral = sp.expand(g*f-sp.sympify(rpntoinfix(pair[1])))
+			integralseq = sptorpn(integral)
+			if ibpselftest(integrandseq,integralseq):
+				queue.put([integrandseq,integralseq])
+				return [integrandseq,integralseq]
+			else:
+				print('Self test failed.')
+				print(rpntoinfix(integralseq) + ' does not differentiate to ' + rpntoinfix(integrandseq))
+				return [['0'],['0']]
+	return [['0'],['0']]
+
 def savetrainingdata(pairs,filepath):
 	originallength = len(pairs)
 	print(f'Saving {originallength} pairs to: {filepath}')
@@ -261,8 +303,15 @@ def savetrainingdata(pairs,filepath):
 		print(f'I found and deleted {originallength - len(pairs)} duplicates.')
 	with open(filepath,'a') as file:
 		while pairs:
-			file.write(json.dumps(pairs.pop()))
-			file.write("\n")
+			writepair = True
+			pair = pairs.pop()
+			for i in pair:
+				for j in i:
+					if j in problemstrs:
+						writepair = False
+			if writepair:
+				file.write(json.dumps(pair))
+				file.write("\n")
 
 def asHours(s):
 	m = np.floor(s / 60)
@@ -280,14 +329,16 @@ def timeSince(since, percent):
 	return 'Elapsed: %s. Remaining: %s.' % (asHours(s), asHours(rs))
 
 if __name__ == '__main__':
-	fwdtimes = 10
-	bwdtimes = 10
+	fwdtimes = 0
+	bwdtimes = 100
+	ibptimes = 100
 	fwdcompleted = 0
 	bwdcompleted = 0
+	ibpcompleted = 0
 	numnodes = 3
 	savepath = 'trainingdata.txt'
 	outpath = None
-	timeout = 10
+	timeout = 15
 	pairs = []
 	starttime = time.time()
 	with mp.Manager() as manager:
@@ -338,29 +389,36 @@ if __name__ == '__main__':
 				print(f"Total functions completed: {bwdcompleted+fwdcompleted}/{bwdtimes+fwdtimes}")
 				print(f"Average seconds per function call: {(time.time()-starttime)/(bwdcompleted+fwdcompleted)}")
 				print(timeSince(starttime, (bwdcompleted+fwdcompleted)/(fwdtimes + bwdtimes)))
-				if len(pairs)>1000:
+				if len(pairs)>100:
 					savetrainingdata(pairs,savepath)
 					print('Save complete. Resuming...')
 		finally:
 			savetrainingdata(pairs,savepath)
-
-"""
-fix this after we implement the training set
-
-def ibpgenerate(numnodes):
-	f = sp.core.numbers.Zero()
-	while f.is_constant():
-		ftree = randomtree(numnodes)
-		f = sp.sympify(rpntoinfix(ftree.reversepolish()))
-	g = sp.core.numbers.Zero()
-	while g.is_constant():
-		gtree = randomtree(numnodes)
-		g = sp.sympify(rpntoinfix(ftree.reversepolish()))
-	df = sp.diff(f,sp.symbols('x'))
-	dg = sp.diff(g,sp.symbols('x'))
-	print('integral of:')
-	print(f*dg)
-	print('is')
-	print(f*g-)
-"""
-
+		pairs = []
+		newpairs = []
+		with open(savepath, 'r') as file:
+			for line in file.readlines():
+				pairs.append(json.loads(line))
+		try:
+			while ibpcompleted < ibptimes:
+				processes = min(numCPUs,ibptimes-ibpcompleted)
+				p = [mp.Process(target = ibpgenerate, args = (numnodes,q,pairs)) for i in range(processes)]
+				for proc in p:
+					proc.start()
+				for i in range(timeout):
+					time.sleep(1)
+					if not any(proc.is_alive() for proc in p):
+						break
+				for i in range(len(p)):
+					if p[i].is_alive():
+						p[i].terminate()
+						print(f"Timeout on process {i}. Terminating.")
+				ibpcompleted += processes
+				print(f"IBP functions completed: {ibpcompleted}/{ibptimes}")
+				while not q.empty():
+					pair = q.get(timeout = 3)
+					print(rpntoinfix(pair[0]) + '   --->   ' + rpntoinfix(pair[1]))
+					if pair not in newpairs:
+						newpairs.append(pair)
+		finally:
+			savetrainingdata(newpairs,savepath)

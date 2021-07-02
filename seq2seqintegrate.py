@@ -27,6 +27,8 @@ import matplotlib.pyplot as plt
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
+print(f"Using {device} for computation.")
+
 SOS_token = 0
 EOS_token = 1
 MAX_LENGTH = 40
@@ -162,7 +164,7 @@ def tensorsfrompair(input_lang,output_lang,pair):
 	target_tensor= tensorfromphrase(output_lang, pair[1])
 	return (input_tensor, target_tensor)
 
-teacher_forcing_ratio = 0.5
+teacher_forcing_ratio = 0.1
 
 
 def train(input_tensor, target_tensor, encoder, decoder, encoder_optimizer, decoder_optimizer, criterion, max_length=MAX_LENGTH):
@@ -317,9 +319,30 @@ def evaluateRandomly(encoder, decoder, n=10):
 		
 hidden_size = 256
 encoder1 = EncoderRNN(integrands.n_words, hidden_size).to(device)
+
+try:
+	if device.type == 'cpu':
+		encoder1.load_state_dict(torch.load('encoder1',map_location=torch.device('cpu')))
+	else:
+		encoder1.load_state_dict(torch.load('encoder1'))
+	print('Loaded encoder from file.')
+except:
+	print('No encoder found. Generating randomly.')
+
 attn_decoder1 = AttnDecoderRNN(hidden_size, integrals.n_words, dropout_p=0.1).to(device)
 
-trainIters(encoder1, attn_decoder1, 100000, print_every=1000)
-evaluateRandomly(encoder1, attn_decoder1)
-torch.save(encoder1.state_dict(),'encoder1')
-torch.save(attn_decoder1.state_dict(),'attn_decoder1')
+try:
+	if device.type == 'cpu':
+		attn_decoder1.load_state_dict(torch.load('attn_decoder1',map_location=torch.device('cpu')))
+	else:
+		attn_decoder1.load_state_dict(torch.load('attn_decoder1'))
+	print('Loaded decoder from file.')
+except:
+	print('No decoder found. Generating randomly.')
+
+try:
+	trainIters(encoder1, attn_decoder1, 50000, print_every=100)
+finally:
+	evaluateRandomly(encoder1, attn_decoder1)
+	torch.save(encoder1.state_dict(),'encoder1')
+	torch.save(attn_decoder1.state_dict(),'attn_decoder1')
