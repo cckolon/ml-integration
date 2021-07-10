@@ -19,13 +19,15 @@ import json
 import time
 import os
 
+fwdtimes = 29000
+bwdtimes = 29000
+ibptimes = 29000
 
-
-unaryoperators = ["log","exp","sin","cos","sqrt","asin","acos","atan",'li','Ei','exp_polar']
+unaryoperators = ["log","exp","sin","cos","sqrt","asin","acos","atan",'li','Ei','exp_polar','Ci','Si']
 binaryoperators = ['+','-','*','/','**']
 variables = ['x','1','2','3']
 
-unaryprobs = [.2,.2,.1,.1,.1,.1,.1,.1,0,0,0]
+unaryprobs = [.2,.2,.1,.1,.1,.1,.1,.1,0,0,0,0,0]
 binaryprobs = [.2,.2,.2,.2,.2]
 varprobs = [.4,.3,.2,.1]
 
@@ -248,7 +250,7 @@ def fwdgenerate(numnodes,queue):
 def ibpselftest(integrandseq,integralseq):
 	return sp.diff(sp.sympify(rpntoinfix(integralseq))) == sp.sympify(rpntoinfix(integrandseq))
 	
-def ibpgenerate(numnodes,queue,pairs):
+def ibpgenerate(numnodes,queue,pairs,integrandset):
 	f = sp.core.numbers.Zero()
 	while f.is_constant():
 		ftree = randomtree(numnodes)
@@ -261,31 +263,39 @@ def ibpgenerate(numnodes,queue,pairs):
 	dg = sp.expand(sp.diff(g,sp.symbols('x')))
 	fdgseq = sptorpn(sp.expand(f*dg))
 	gdfseq = sptorpn(sp.expand(g*df))
-	for pair in pairs:
-		if pair[0] == fdgseq:
-			integrandseq = gdfseq
-			integral = sp.expand(g*f-sp.sympify(rpntoinfix(pair[1])))
-			integralseq = sptorpn(integral)
-			if ibpselftest(integrandseq,integralseq):
-				print('Self test passed.')
-				queue.put([integrandseq,integralseq])
-				return [integrandseq,integralseq]
-			else:
-				print('Self test failed.')
-				print(rpntoinfix(integralseq) + ' does not differentiate to ' + rpntoinfix(integrandseq))
-				return [['0'],['0']]
-		elif pair[0] == gdfseq:
-			integrandseq = fdgseq
-			integral = sp.expand(g*f-sp.sympify(rpntoinfix(pair[1])))
-			integralseq = sptorpn(integral)
-			if ibpselftest(integrandseq,integralseq):
-				queue.put([integrandseq,integralseq])
-				return [integrandseq,integralseq]
-			else:
-				print('Self test failed.')
-				print(rpntoinfix(integralseq) + ' does not differentiate to ' + rpntoinfix(integrandseq))
-				return [['0'],['0']]
-	return [['0'],['0']]
+	print(f"Searching for ({g})*({df}) or ({f})*({dg}) in {len(pairs)} training pairs.")
+	if tuple(fdgseq) in integrandset:
+		print(f"I found {f}*{dg} in the training set.")
+		print()
+		for pair in pairs:
+			if pair[0] == fdgseq:
+				integrandseq = gdfseq
+				integral = sp.expand(g*f-sp.sympify(rpntoinfix(pair[1])))
+				integralseq = sptorpn(integral)
+				if ibpselftest(integrandseq,integralseq):
+					print('Self test passed.')
+					queue.put([integrandseq,integralseq])
+					return [integrandseq,integralseq]
+				else:
+					print('Self test failed.')
+					print(rpntoinfix(integralseq) + ' does not differentiate to ' + rpntoinfix(integrandseq))
+					return [['0'],['0']]
+	elif tuple(gdfseq) in integrandset:
+		print(f"I found {g}*{df} in the training set.")
+		for pair in pairs:
+			if pair[0] == gdfseq:
+				integrandseq = fdgseq
+				integral = sp.expand(g*f-sp.sympify(rpntoinfix(pair[1])))
+				integralseq = sptorpn(integral)
+				if ibpselftest(integrandseq,integralseq):
+					queue.put([integrandseq,integralseq])
+					return [integrandseq,integralseq]
+				else:
+					print('Self test failed.')
+					print(rpntoinfix(integralseq) + ' does not differentiate to ' + rpntoinfix(integrandseq))
+					return [['0'],['0']]
+	else:
+		return [['0'],['0']]
 
 def savetrainingdata(pairs,filepath):
 	originallength = len(pairs)
@@ -312,6 +322,8 @@ def savetrainingdata(pairs,filepath):
 			if writepair:
 				file.write(json.dumps(pair))
 				file.write("\n")
+			else:
+				print(f'I am deleting {pair} due to exotic variables.')
 
 def asHours(s):
 	m = np.floor(s / 60)
@@ -329,80 +341,95 @@ def timeSince(since, percent):
 	return 'Elapsed: %s. Remaining: %s.' % (asHours(s), asHours(rs))
 
 if __name__ == '__main__':
-	fwdtimes = 0
-	bwdtimes = 100
-	ibptimes = 100
 	fwdcompleted = 0
 	bwdcompleted = 0
 	ibpcompleted = 0
-	numnodes = 3
+	numnodes = 8
 	savepath = 'trainingdata.txt'
 	outpath = None
-	timeout = 15
+	timeout = 10
 	pairs = []
 	starttime = time.time()
 	with mp.Manager() as manager:
 		q = manager.Queue()
 		try:
-			while (fwdcompleted < fwdtimes) | (bwdcompleted < bwdtimes):
-				if fwdcompleted < fwdtimes:
-					processes = min(numCPUs,fwdtimes-fwdcompleted)
-					p = [mp.Process(target = fwdgenerate, args = (numnodes,q)) for i in range(processes)]
-					for proc in p:
-						proc.start()
-					for i in range(timeout):
-						time.sleep(1)
-						if not any(proc.is_alive() for proc in p):
-							break
-					for i in range(len(p)):
-						if p[i].is_alive():
-							p[i].terminate()
-							print(f"Timeout on process {i}. Terminating.")
-					fwdcompleted += processes
-					print(f"Forward functions completed: {fwdcompleted}/{fwdtimes}")
-
+			fwdstart = time.time()
+			while fwdcompleted < fwdtimes:
+				processes = min(numCPUs,fwdtimes-fwdcompleted)
+				p = [mp.Process(target = fwdgenerate, args = (numnodes,q)) for i in range(processes)]
+				for proc in p:
+					proc.start()
+				for i in range(timeout):
+					time.sleep(1)
+					if not any(proc.is_alive() for proc in p):
+						break
+				for i in range(len(p)):
+					if p[i].is_alive():
+						p[i].terminate()
+						print(f"Timeout on process {i}. Terminating.")
+				fwdcompleted += processes
 				while not q.empty():
 					pair = q.get(timeout = 3)
 					print(rpntoinfix(pair[0]) + '   --->   ' + rpntoinfix(pair[1]))
 					if pair not in pairs:
 						pairs.append(pair)
-				if bwdcompleted < bwdtimes:
-					processes = min(numCPUs,bwdtimes-bwdcompleted)
-					p = [mp.Process(target = bwdgenerate, args = (numnodes,q)) for i in range(processes)]
-					for proc in p:
-						proc.start()
-					for i in range(timeout):
-						time.sleep(1)
-						if not any(proc.is_alive() for proc in p):
-							break
-					for i in range(len(p)):
-						if p[i].is_alive():
-							p[i].terminate()
-							print(f"Timeout on process {i}. Terminating.")
-					bwdcompleted += processes
-					print(f"Backwards functions completed: {bwdcompleted}/{bwdtimes}")
-				while not q.empty():
-					pair = q.get(timeout = 3)
-					print(rpntoinfix(pair[0]) + '   --->   ' + rpntoinfix(pair[1]))
-					if pair not in pairs:
-						pairs.append(pair)
-				print(f"Total functions completed: {bwdcompleted+fwdcompleted}/{bwdtimes+fwdtimes}")
-				print(f"Average seconds per function call: {(time.time()-starttime)/(bwdcompleted+fwdcompleted)}")
-				print(timeSince(starttime, (bwdcompleted+fwdcompleted)/(fwdtimes + bwdtimes)))
+				print(f"Forward functions completed: {fwdcompleted}/{fwdtimes}")
+				print(f"Total functions completed: {bwdcompleted+fwdcompleted}/{bwdtimes+fwdtimes+ibptimes}")
+				print(f"Average seconds per fwd function call: {(time.time()-fwdstart)/(fwdcompleted)}")
+				print(timeSince(fwdstart, fwdcompleted/fwdtimes))
 				if len(pairs)>100:
 					savetrainingdata(pairs,savepath)
 					print('Save complete. Resuming...')
+			if fwdcompleted > 0:
+				fwdavgtime = (time.time()-fwdstart)/(fwdcompleted)
+			else:
+				fwdavgtime = 'Not calculated'
+			bwdstart = time.time()
+			while bwdcompleted < bwdtimes:
+				processes = min(numCPUs,bwdtimes-bwdcompleted)
+				p = [mp.Process(target = bwdgenerate, args = (numnodes,q)) for i in range(processes)]
+				for proc in p:
+					proc.start()
+				for i in range(timeout):
+					time.sleep(1)
+					if not any(proc.is_alive() for proc in p):
+						break
+				for i in range(len(p)):
+					if p[i].is_alive():
+						p[i].terminate()
+						print(f"Timeout on process {i}. Terminating.")
+				bwdcompleted += processes
+				while not q.empty():
+					pair = q.get(timeout = 3)
+					print(rpntoinfix(pair[0]) + '   --->   ' + rpntoinfix(pair[1]))
+					if pair not in pairs:
+						pairs.append(pair)
+				print(f"Backwards functions completed: {bwdcompleted}/{bwdtimes}")
+				print(f"Total functions completed: {bwdcompleted+fwdcompleted}/{bwdtimes+fwdtimes+ibptimes}")
+				print(f"Average seconds per bwd function call: {(time.time()-bwdstart)/(bwdcompleted+fwdcompleted+ibpcompleted)}")
+				print(timeSince(bwdstart, bwdcompleted/bwdtimes))
+				if len(pairs)>100:
+					savetrainingdata(pairs,savepath)
+					print('Save complete. Resuming...')
+			if bwdcompleted > 0:
+				bwdavgtime = (time.time()-bwdstart)/(bwdcompleted)
+			else:
+				bwdavgtime = 'Not calculated'
 		finally:
 			savetrainingdata(pairs,savepath)
 		pairs = []
 		newpairs = []
+		integrandset = set([])
+		ibpstart = time.time()
 		with open(savepath, 'r') as file:
 			for line in file.readlines():
 				pairs.append(json.loads(line))
+				integrandset.add(tuple(json.loads(line)[0]))
+		print(f"I imported {len(pairs)} pairs.")
 		try:
 			while ibpcompleted < ibptimes:
 				processes = min(numCPUs,ibptimes-ibpcompleted)
-				p = [mp.Process(target = ibpgenerate, args = (numnodes,q,pairs)) for i in range(processes)]
+				p = [mp.Process(target = ibpgenerate, args = (numnodes,q,pairs,integrandset)) for i in range(processes)]
 				for proc in p:
 					proc.start()
 				for i in range(timeout):
@@ -414,11 +441,22 @@ if __name__ == '__main__':
 						p[i].terminate()
 						print(f"Timeout on process {i}. Terminating.")
 				ibpcompleted += processes
-				print(f"IBP functions completed: {ibpcompleted}/{ibptimes}")
 				while not q.empty():
 					pair = q.get(timeout = 3)
 					print(rpntoinfix(pair[0]) + '   --->   ' + rpntoinfix(pair[1]))
 					if pair not in newpairs:
 						newpairs.append(pair)
+				print(f"IBP functions completed: {ibpcompleted}/{ibptimes}")
+				print(f"Total functions completed: {ibpcompleted+bwdcompleted+fwdcompleted}/{bwdtimes+fwdtimes+ibptimes}")
+				print(f"Average seconds per IBP function call: {(time.time()-ibpstart)/(ibpcompleted)}")
+				print(timeSince(ibpstart, ibpcompleted/ibptimes))
+			if ibpcompleted > 0:
+				ibpavgtime = (time.time()-ibpstart)/(ibpcompleted)
+			else:
+				ibpavgtime = 'Not calculated'
 		finally:
 			savetrainingdata(newpairs,savepath)
+			print('Program complete.')
+			print(f'Average forward function time: {fwdavgtime}')
+			print(f'Average backward function time: {bwdavgtime}')
+			print(f'Average IBP function time: {ibpavgtime}')
