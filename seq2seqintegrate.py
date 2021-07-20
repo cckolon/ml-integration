@@ -164,7 +164,7 @@ def tensorsfrompair(input_lang,output_lang,pair):
 	target_tensor= tensorfromphrase(output_lang, pair[1])
 	return (input_tensor, target_tensor)
 
-teacher_forcing_ratio = 0.1
+teacher_forcing_ratio = 0.8
 
 
 def train(input_tensor, target_tensor, encoder, decoder, encoder_optimizer, decoder_optimizer, criterion, max_length=MAX_LENGTH):
@@ -341,7 +341,7 @@ except:
 	print('No decoder found. Generating randomly.')
 
 try:
-	trainIters(encoder1, attn_decoder1, 50000, print_every=100)
+	trainIters(encoder1, attn_decoder1, 100000, print_every=500,learning_rate = 0.0001)
 finally:
 	evaluateRandomly(encoder1, attn_decoder1)
 	torch.save(encoder1.state_dict(),'encoder1')
