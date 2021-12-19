@@ -341,7 +341,7 @@ except:
 	print('No decoder found. Generating randomly.')
 
 try:
-	trainIters(encoder1, attn_decoder1, 100000, print_every=500,learning_rate = 0.0001)
+	trainIters(encoder1, attn_decoder1, 400000, print_every=500,learning_rate = 0.0001)
 finally:
 	evaluateRandomly(encoder1, attn_decoder1)
 	torch.save(encoder1.state_dict(),'encoder1')

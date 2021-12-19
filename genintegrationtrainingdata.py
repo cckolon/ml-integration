@@ -18,10 +18,13 @@ import multiprocessing as mp
 import json
 import time
 import os
+from functools import lru_cache
 
-fwdtimes = 29000
-bwdtimes = 29000
-ibptimes = 29000
+fwdtimes = 1000
+bwdtimes = 1000
+ibptimes = 1000
+
+deecache = {}
 
 unaryoperators = ["log","exp","sin","cos","sqrt","asin","acos","atan",'li','Ei','exp_polar','Ci','Si']
 binaryoperators = ['+','-','*','/','**']
@@ -100,6 +103,14 @@ class Node:
 #this function returns the number of different binary subtrees that can be generated from e empty elements, with n internal nodes to generate
 # e is the length of the leaves array
 # k is the index of the array to choose from
+def deecached(e,n,deehash):
+    if (e,n) in deehash:
+        return deehash[(e,n)]
+    else:
+        newdee = dee(e,n)
+        deehash[(e,n)] = newdee
+        return newdee
+
 @jit
 def dee(e,n):
 	if (e <= 0):
@@ -112,12 +123,11 @@ def dee(e,n):
 		return dee(e-1,n) + dee(e,n-1) + dee(e+1,n-1)
 
 #this function returns the probability that the next internal node is in position k with arity a
-@jit
-def ell(e,n,k,a):
+def ell(e,n,k,a,deehash):
 	if (a==1):
-		return dee(e-k,n-1)/dee(e,n)
+		return deecached(e-k,n-1,deehash)/deecached(e,n,deehash)
 	elif (a==2):
-		return dee(e-k+1,n-1)/dee(e,n)
+		return deecached(e-k+1,n-1,deehash)/deecached(e,n,deehash)
 	else:
 		return 0
 
@@ -126,7 +136,7 @@ def randomtree(numnodes):
 	tree = Functree()
 	while n > 0:
 		kalist = list(itt.product(range(len(tree.leaves)),[1,2]))
-		kaprobs = [ell(len(tree.leaves),n,*i) for i in kalist]
+		kaprobs = [ell(len(tree.leaves),n,*i,deecache) for i in kalist]
 		(k,a) = np.random.default_rng().choice(kalist,p=kaprobs)
 		tree.addnode(k,a)
 		n -= 1
